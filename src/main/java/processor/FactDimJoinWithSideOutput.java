@@ -5,13 +5,17 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
 import org.apache.flink.util.Collector;
+import org.apache.flink.util.OutputTag;
 
-public abstract  class FactDimJoin<K, F, D, O> extends KeyedCoProcessFunction<K, F, D, O> {
+public abstract  class FactDimJoinWithSideOutput <K, F,D,O> extends KeyedCoProcessFunction<K,F,D,O> {
+
     private transient ValueState<D> dimState;
     private final Class<D> dimTypeClass;
+    private final OutputTag<F> sideOtputTag;
 
-    public FactDimJoin(Class<D> dimTypeClass) {
+    public FactDimJoinWithSideOutput(Class<D> dimTypeClass, OutputTag<F> sideOtputTag) {
         this.dimTypeClass = dimTypeClass;
+        this.sideOtputTag = sideOtputTag;
     }
 
     @Override
@@ -27,6 +31,9 @@ public abstract  class FactDimJoin<K, F, D, O> extends KeyedCoProcessFunction<K,
         K key = context.getCurrentKey();
         if (dim != null){
             collector.collect(join(key, f, dim));
+        }
+        else{
+            context.output(sideOtputTag, f);
         }
 
     }

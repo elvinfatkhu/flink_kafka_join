@@ -8,8 +8,10 @@ import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import processor.TransactionCustomerJoin;
+import org.apache.flink.util.OutputTag;
+import processor.TransactionCustomerJoinWithSideOutput;
 import schema.Customer;
 import schema.Transaction;
 import schema.TransactionCustomer;
@@ -51,7 +53,16 @@ public class DataStreamJob {
         KeyedStream<Customer, String> keyedCustomerStream = trxCustomer.keyBy(Customer -> Customer.getCustomerId());
 
         //Join both stream
-        DataStream<TransactionCustomer> enriched = keyedtrxStream.connect(keyedCustomerStream).process(new TransactionCustomerJoin(Customer.class));
+//        DataStream<TransactionCustomer> enriched = keyedtrxStream.connect(keyedCustomerStream).process(new TransactionCustomerJoin(Customer.class));
+
+
+        //Join both stream with side output
+        OutputTag<Transaction> sideOutputTransactionOutputTag = new OutputTag<Transaction>("failed to join trx with customer"){};
+
+        SingleOutputStreamOperator<TransactionCustomer> trxSuccessJoinStream = keyedtrxStream.connect(keyedCustomerStream)
+                .process(new TransactionCustomerJoinWithSideOutput(Customer.class, sideOutputTransactionOutputTag));
+        DataStream<Transaction> trxFailedJoinStream = trxSuccessJoinStream.getSideOutput(sideOutputTransactionOutputTag);
+
 
         //Add Sink
         KafkaSink<TransactionCustomer> transactionCustomerKafkaSink = KafkaSink.<TransactionCustomer>builder()
@@ -60,8 +71,16 @@ public class DataStreamJob {
                 .setRecordSerializer(new JsonKafkaSerializer<>(TransactionCustomer.class, "Event.Flink.Transaction.Enriched"))
                 .build();
 
+        //Add SideoutputSink
+        KafkaSink<Transaction> trxSideOutputKafkaSink = KafkaSink.<Transaction>builder()
+                .setBootstrapServers("localhost:9092")
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .setRecordSerializer(new JsonKafkaSerializer<>(Transaction.class, "Event.Flink.Anomaly"))
+                .build();
+
         //Sink to Kafka
-        enriched.sinkTo(transactionCustomerKafkaSink);
+        trxSuccessJoinStream.sinkTo(transactionCustomerKafkaSink);
+        trxFailedJoinStream.sinkTo(trxSideOutputKafkaSink);
         env.execute("Flink_transaction_enrichment");
 
     }
