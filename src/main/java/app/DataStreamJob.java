@@ -2,18 +2,19 @@ package app;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.connector.base.DeliveryGuarantee;
+import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.connectors.kafka.KafkaSerializationSchema;
-import processor.FactDimJoin;
 import processor.TransactionCustomerJoin;
 import schema.Customer;
 import schema.Transaction;
 import schema.TransactionCustomer;
 import serde.JsonKafkaDeserializer;
+import serde.JsonKafkaSerializer;
 
 public class DataStreamJob {
     public static void main(String[] args) throws Exception {
@@ -51,10 +52,16 @@ public class DataStreamJob {
 
         //Join both stream
         DataStream<TransactionCustomer> enriched = keyedtrxStream.connect(keyedCustomerStream).process(new TransactionCustomerJoin(Customer.class));
-        enriched.print();
 
+        //Add Sink
+        KafkaSink<TransactionCustomer> transactionCustomerKafkaSink = KafkaSink.<TransactionCustomer>builder()
+                .setBootstrapServers("localhost:9092")
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .setRecordSerializer(new JsonKafkaSerializer<>(TransactionCustomer.class, "Event.Flink.Transaction.Enriched"))
+                .build();
 
-
+        //Sink to Kafka
+        enriched.sinkTo(transactionCustomerKafkaSink);
         env.execute("Flink_transaction_enrichment");
 
     }
